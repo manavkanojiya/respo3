@@ -1,0 +1,244 @@
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from docx import Document
+from docx.shared import Inches, Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import parse_xml
+from docx.oxml.ns import nsdecls
+
+# 1. INITIAL DIRECTORY SYSTEM SETUP
+os.makedirs('temp_plots', exist_ok=True)
+os.makedirs('output_report', exist_ok=True)
+
+# 2. SEEDING & SYNTHETIC DATA GENERATION (Simulating a Messy HR Dataset)
+np.random.seed(50)
+n_records = 150
+
+raw_hr_data = {
+    'Employee_ID': [f"EMP_{2000 + i}" for i in range(n_records)],
+    'Age': np.random.choice([22, 28, 35, 42, 50, 61, np.nan], size=n_records, p=[0.1, 0.2, 0.3, 0.2, 0.1, 0.05, 0.05]),
+    'Department': np.random.choice(['Engineering', 'Sales', 'Marketing', 'HR', 'engineering', 'SALES '], size=n_records),
+    'Monthly_Salary': np.random.uniform(2500.0, 16000.0, size=n_records).round(2),
+    'Performance_Score': np.random.choice([1.0, 2.0, 3.0, 4.0, 5.0, np.nan], size=n_records, p=[0.05, 0.15, 0.5, 0.2, 0.05, 0.05]),
+    'Years_At_Company': np.random.randint(1, 15, size=n_records),
+    'Left_Company': np.random.choice([0, 1], size=n_records, p=[0.75, 0.25])
+}
+
+df_raw = pd.DataFrame(raw_hr_data)
+# Inject manual duplicate blocks to test deduplication pipelines
+df_raw = pd.concat([df_raw, df_raw.iloc[:8]], ignore_index=True)
+df_raw['Monthly_Salary'] = df_raw['Monthly_Salary'].astype(str) # Artificially cast to string
+df_raw.to_csv("temp_plots/hr_raw_data.csv", index=False)
+
+# 3. COMPREHENSIVE DATA PREPROCESSING & CLEANING PIPELINE
+df = pd.read_csv("temp_plots/hr_raw_data.csv")
+
+# Step A: Correct Data Type Issues
+df['Monthly_Salary'] = pd.to_numeric(df['Monthly_Salary'], errors='coerce')
+
+# Step B: Text Standardization & Whitespace Cleanout
+df['Department'] = df['Department'].str.upper().str.strip()
+
+# Step C: Outlier Mitigation & Capping using Interquartile Range (IQR)
+q1 = df['Monthly_Salary'].quantile(0.25)
+q3 = df['Monthly_Salary'].quantile(0.75)
+iqr = q3 - q1
+upper_bound = q3 + (1.5 * iqr)
+df['Monthly_Salary'] = np.where(df['Monthly_Salary'] > upper_bound, upper_bound, df['Monthly_Salary'])
+
+# Step D: Missing Value Imputation
+df['Age'] = df['Age'].fillna(df['Age'].median())
+df['Performance_Score'] = df['Performance_Score'].fillna(df['Performance_Score'].mode()[0])
+
+# Step E: Deduplication
+df.drop_duplicates(inplace=True)
+df.reset_index(drop=True, inplace=True)
+
+# Step F: Feature Engineering
+df['Annual_Salary'] = df['Monthly_Salary'] * 12
+
+# 4. EXPLORATORY DATA ANALYSIS (EDA) & AGGREGATIONS
+dept_summary = df.groupby('Department').agg(
+    Headcount=('Employee_ID', 'count'),
+    Avg_Monthly_Salary=('Monthly_Salary', 'mean'),
+    Avg_Performance=('Performance_Score', 'mean'),
+    Turnover_Rate=('Left_Company', 'mean')
+).reset_index()
+
+# 5. VISUALIZATION COMPILATION (High-Resolution Visual Assets)
+sns.set_theme(style="whitegrid")
+
+# Plot 1: Headcount Distribution (Bar Chart)
+plt.figure(figsize=(7, 3.5))
+sns.barplot(data=dept_summary, x='Department', y='Headcount', palette='Blues_d')
+plt.title('Employee Headcount Distribution by Department', fontsize=12, fontweight='bold')
+plt.xlabel('Department', fontsize=10)
+plt.ylabel('Active Employee Count', fontsize=10)
+plt.tight_layout()
+p1_path = 'temp_plots/plot1_bar.png'
+plt.savefig(p1_path, dpi=200)
+plt.close()
+
+# Plot 2: Salary Structure Range Distribution (Histogram)
+plt.figure(figsize=(7, 3.5))
+sns.histplot(data=df, x='Monthly_Salary', bins=15, kde=True, color='teal')
+plt.title('Monthly Base Salary Distribution Profile', fontsize=12, fontweight='bold')
+plt.xlabel('Monthly Salary ($)', fontsize=10)
+plt.ylabel('Employee Frequency Count', fontsize=10)
+plt.tight_layout()
+p2_path = 'temp_plots/plot2_hist.png'
+plt.savefig(p2_path, dpi=200)
+plt.close()
+
+# Plot 3: Salary vs Performance Correlations (Scatter Plot)
+plt.figure(figsize=(7, 3.5))
+sns.scatterplot(data=df, x='Monthly_Salary', y='Performance_Score', hue='Left_Company', palette='Set1', alpha=0.8)
+plt.title('Analysis of Monthly Salary vs. Performance Score', fontsize=12, fontweight='bold')
+plt.xlabel('Monthly Salary ($)', fontsize=10)
+plt.ylabel('Performance Rating (1-5)', fontsize=10)
+plt.legend(title='Left Company (1=Yes)')
+plt.tight_layout()
+p3_path = 'temp_plots/plot3_scatter.png'
+plt.savefig(p3_path, dpi=200)
+plt.close()
+
+# Plot 4: Salary Spread Across Departments (Box Plot)
+plt.figure(figsize=(7, 3.5))
+sns.boxplot(data=df, x='Department', y='Monthly_Salary', palette='Pastel1')
+plt.title('Salary Compensation Ranges Across Department Divisions', fontsize=12, fontweight='bold')
+plt.xlabel('Department', fontsize=10)
+plt.ylabel('Monthly Salary ($)', fontsize=10)
+plt.tight_layout()
+p4_path = 'temp_plots/plot4_box.png'
+plt.savefig(p4_path, dpi=200)
+plt.close()
+
+# 6. PROFESSIONAL WORD FILL GENERATION (python-docx Structure)
+doc = Document()
+
+# Set Margins
+for sec in doc.sections:
+    sec.top_margin = Inches(1)
+    sec.bottom_margin = Inches(1)
+    sec.left_margin = Inches(1)
+    sec.right_margin = Inches(1)
+
+def add_header(text, level):
+    h = doc.add_heading(text, level=level)
+    h.paragraph_format.space_before = Pt(14)
+    h.paragraph_format.space_after = Pt(6)
+    h.paragraph_format.keep_with_next = True
+    run = h.runs[0]
+    run.font.name = 'Arial'
+    if level == 1:
+        run.font.size = Pt(16)
+        run.font.color.rgb = RGBColor(0x1B, 0x36, 0x5D)
+    else:
+        run.font.size = Pt(13)
+        run.font.color.rgb = RGBColor(0x4A, 0x77, 0x7A)
+    return h
+
+def add_paragraph_styled(text, bold_prefix="", space_after=6):
+    p = doc.add_paragraph()
+    p.paragraph_format.space_after = Pt(space_after)
+    p.paragraph_format.line_spacing = 1.15
+    if bold_prefix:
+        rb = p.add_run(bold_prefix)
+        rb.font.name = 'Arial'
+        rb.font.size = Pt(11)
+        rb.bold = True
+    rt = p.add_run(text)
+    rt.font.name = 'Arial'
+    rt.font.size = Pt(11)
+    return p
+
+def add_code_snippet(code):
+    p = doc.add_paragraph()
+    p.paragraph_format.left_indent = Inches(0.25)
+    p.paragraph_format.space_before = Pt(4)
+    p.paragraph_format.space_after = Pt(4)
+    pPr = p._p.get_or_add_pPr()
+    shd = parse_xml(f'<w:shd {nsdecls("w")} w:fill="F4F4F4"/>')
+    pPr.append(shd)
+    r = p.add_run(code)
+    r.font.name = 'Consolas'
+    r.font.size = Pt(9.5)
+    r.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+
+# Title Block
+title_p = doc.add_paragraph()
+title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+title_run = title_p.add_run("Real-World Dataset Analysis Project:\nHR Analytics & Turnover Study")
+title_run.font.name = 'Arial'
+title_run.font.size = Pt(22)
+title_run.bold = True
+title_run.font.color.rgb = RGBColor(0x1B, 0x36, 0x5D)
+
+# Section 1
+add_header("Section 1: Project Environment Configuration", level=1)
+add_paragraph_styled("To isolate the computational requirements and guarantee library package stability, run the following environmental setup scripts:")
+add_code_snippet("pip install numpy pandas matplotlib seaborn python-docx")
+
+# Section 2
+add_header("Section 2: Exploratory Profiling & Data Architecture", level=1)
+add_paragraph_styled("Understanding initial structural properties helps pinpoint messy data issues prior to analytics injection:")
+add_code_snippet(
+    "df = pd.read_csv('hr_raw_data.csv')\n"
+    "print(df.info())\n"
+    "print(df.isnull().sum())"
+)
+
+# Section 3
+add_header("Section 3: Data Preprocessing & Cleaning Framework", level=1)
+add_paragraph_styled("The preprocessing pipeline performs data validation across four distinct areas:")
+add_paragraph_styled(" Fixes numerical variables that were accidentally saved as text parameters.", bold_prefix="• Type Formatting: ")
+add_paragraph_styled(" Strips blank space characters and unifies text to consistent uppercase characters.", bold_prefix="• Uniform Casing: ")
+add_paragraph_styled(" Fills missing numeric entries using data averages to keep the dataset complete.", bold_prefix="• Missing Value Imputation: ")
+add_paragraph_styled(" Uses Interquartile Range thresholds to find and manage extreme numeric data outliers.", bold_prefix="• Outlier Mitigation: ")
+add_code_snippet(
+    "df['Monthly_Salary'] = pd.to_numeric(df['Monthly_Salary'], errors='coerce')\n"
+    "df['Department'] = df['Department'].str.upper().str.strip()\n"
+    "df['Age'] = df['Age'].fillna(df['Age'].median())\n"
+    "df.drop_duplicates(inplace=True)"
+)
+
+# Section 4
+add_header("Section 4: Data Manipulation & Descriptive Groupings", level=1)
+add_paragraph_styled("The structured table below shows key performance metrics calculated across each department division:")
+
+# Add Table
+t = doc.add_table(rows=1, cols=5)
+t.style = 'Light Shading Accent 1'
+hdr = t.rows[0].cells
+hdr[0].text = 'Department'
+hdr[1].text = 'Headcount'
+hdr[2].text = 'Avg Salary ($)'
+hdr[3].text = 'Avg Rating'
+hdr[4].text = 'Turnover Rate'
+
+for _, row in dept_summary.iterrows():
+    cells = t.add_row().cells
+    cells[0].text = str(row['Department'])
+    cells[1].text = str(int(row['Headcount']))
+    cells[2].text = f"{row['Avg_Monthly_Salary']:,.2f}"
+    cells[3].text = f"{row['Avg_Performance']:.2f}"
+    cells[4].text = f"{row['Turnover_Rate']:.1%}"
+
+doc.add_paragraph().paragraph_format.space_before = Pt(12)
+
+# Section 5
+add_header("Section 5: High-Resolution Data Visualizations", level=1)
+
+add_header("1. Workforce Distribution Profiling", level=2)
+doc.add_picture(p1_path, width=Inches(5.0))
+add_paragraph_styled("Figure 1 shows active employee headcounts across departments, highlighting human resource placement across divisions.")
+
+add_header("2. Base Compensation Spectrum Density", level=2)
+doc.add_picture(p2_path, width=Inches(5.0))
+add_paragraph_styled("Figure 2 outlines salary distributions. The smooth curve displays the concentration of employee base salaries.")
+
+add_header("3. Salary Compensation vs. Performance Scores", level=2)
+doc.add_picture(p3_path, width=Inches(5.0))
